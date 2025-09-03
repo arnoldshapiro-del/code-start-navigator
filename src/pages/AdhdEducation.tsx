@@ -5,12 +5,13 @@ import { Link } from "react-router-dom";
 import { usePdfViewer } from "@/hooks/usePdfViewer";
 import { remoteSlidesJson, remotePdf, REMOTE_ASSET_BASE } from "@/config/assets";
 
-type SlideSource = 'IMAGES_REMOTE' | 'PDF_REMOTE' | 'MISSING';
+type SlideSource = 'IMAGES_REMOTE' | 'PDF_REMOTE' | 'IMAGES_LOCAL' | 'MISSING';
 
 interface SlideData {
   source: SlideSource;
   slides?: string[];
   pdfUrl?: string;
+  isPrivateRepo?: boolean;
 }
 
 // Helper function for encoding paths
@@ -18,9 +19,12 @@ function enc(p: string): string {
   return p.split('/').map(encodeURIComponent).join('/');
 }
 
-// Load slides with GitHub remote only
-export async function loadSlidesForCondition(title: string): Promise<SlideData> {
+// Load slides with GitHub remote fallback to local
+export async function loadSlidesForCondition(title: string): Promise<SlideData & { isPrivateRepo?: boolean }> {
+  // Try remote GitHub first
   const jsonUrl = remoteSlidesJson(title);
+  let isPrivateRepo = false;
+  
   try {
     const jr = await fetch(jsonUrl);
     if (jr.ok) {
@@ -31,27 +35,55 @@ export async function loadSlidesForCondition(title: string): Promise<SlideData> 
         console.log('SOURCE', title, result.source);
         return result;
       }
+    } else if (jr.status === 404) {
+      isPrivateRepo = true;
     }
-  } catch {}
+  } catch (err) {
+    console.log('Remote fetch failed, checking local fallback:', err);
+    isPrivateRepo = true;
+  }
   
-  const pdfUrl = remotePdf(title);
+  // Try remote PDF if images failed
+  if (!isPrivateRepo) {
+    const pdfUrl = remotePdf(title);
+    try {
+      const pr = await fetch(pdfUrl, { method: 'HEAD' });
+      if (pr.ok) {
+        const result = { source: 'PDF_REMOTE' as SlideSource, pdfUrl };
+        console.log('SOURCE', title, result.source);
+        return result;
+      } else if (pr.status === 404) {
+        isPrivateRepo = true;
+      }
+    } catch {
+      isPrivateRepo = true;
+    }
+  }
+  
+  // Fallback to local assets
   try {
-    const pr = await fetch(pdfUrl, { method: 'HEAD' });
-    if (pr.ok) {
-      const result = { source: 'PDF_REMOTE' as SlideSource, pdfUrl };
-      console.log('SOURCE', title, result.source);
-      return result;
+    const localJsonUrl = `/about-conditions/${enc(title)}/slides.json`;
+    const localResponse = await fetch(localJsonUrl);
+    if (localResponse.ok) {
+      const localJson: any = await localResponse.json();
+      const localSlides = (localJson?.slides ?? []).map((p: string) => `/about-conditions/${enc(title)}/${enc(p)}`);
+      if (localSlides.length) {
+        const result = { source: 'IMAGES_LOCAL' as SlideSource, slides: localSlides, isPrivateRepo };
+        console.log('SOURCE', title, result.source, 'Private repo detected:', isPrivateRepo);
+        return result;
+      }
     }
-  } catch {}
+  } catch (err) {
+    console.log('Local fallback failed:', err);
+  }
   
-  const result = { source: 'MISSING' as SlideSource };
+  const result = { source: 'MISSING' as SlideSource, isPrivateRepo };
   console.log('SOURCE', title, result.source);
   return result;
 }
 
 export default function AdhdEducation() {
   const [currentCondition, setCurrentCondition] = useState('ADHD');
-  // @ts-ignore
   const [slideData, setSlideData] = useState<SlideData>({ source: 'MISSING', slides: [] });
   const [currentSlide, setCurrentSlide] = useState<number | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -71,15 +103,13 @@ export default function AdhdEducation() {
         const data = await loadSlidesForCondition(currentCondition);
         setSlideData(data);
         
-        // @ts-ignore
-        if (data.source === 'IMAGES_REMOTE' && data.slides && data.slides.length > 0) {
+        if ((data.source === 'IMAGES_REMOTE' || data.source === 'IMAGES_LOCAL') && data.slides && data.slides.length > 0) {
           // Preload first image slide
           const preloadImg = new Image();
           preloadImg.src = data.slides[0];
         }
       } catch (error) {
         console.error('Error loading slides:', error);
-        // @ts-ignore
         setSlideData({ source: 'MISSING', slides: [] });
       } finally {
         setIsLoading(false);
@@ -91,7 +121,6 @@ export default function AdhdEducation() {
 
   // Generate PDF page URLs when PDF is loaded
   useEffect(() => {
-    // @ts-ignore
     if (slideData.source === 'PDF_REMOTE' && numPages > 0) {
       const generatePages = async () => {
         const pages: string[] = [];
@@ -111,8 +140,7 @@ export default function AdhdEducation() {
   }, [slideData, numPages]);
 
   // Get current slides array based on source
-  // @ts-ignore
-  const currentSlides = slideData.source === 'IMAGES_REMOTE' ? (slideData.slides || []) : pdfPages;
+  const currentSlides = (slideData.source === 'IMAGES_REMOTE' || slideData.source === 'IMAGES_LOCAL') ? (slideData.slides || []) : pdfPages;
 
   const conditions = [
     { id: 'ADHD', name: 'ADHD', icon: '🧠' },
@@ -153,7 +181,6 @@ export default function AdhdEducation() {
       setCurrentSlide(nextIndex);
       
       // If PDF and page needs rendering, render it now
-      // @ts-ignore
       if (slideData.source === 'PDF_REMOTE' && pdfPages[nextIndex]?.startsWith('pdf-page-')) {
         const pageNum = nextIndex + 1;
         const pageDataUrl = await getPageDataUrl(pageNum);
@@ -197,6 +224,18 @@ export default function AdhdEducation() {
           <p className="text-muted-foreground mb-6">
             Comprehensive educational materials about mental health conditions from Dr. Arnold G. Shapiro
           </p>
+          
+          {/* Private repo warning */}
+          {slideData.isPrivateRepo && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6 max-w-4xl mx-auto">
+              <p className="text-sm text-red-800 font-medium mb-2">🔒 Private Repository Detected</p>
+              <div className="text-sm text-red-700 space-y-1">
+                <p>Your GitHub repository <strong>arnol/arnie-newest-updated-website-main</strong> is private.</p>
+                <p><strong>Solution:</strong> Make your GitHub repository public to display remote slides, or use local slides in Lovable.</p>
+                <p>Remote assets can only be loaded from public GitHub repositories.</p>
+              </div>
+            </div>
+          )}
           
           {/* Crystal clear but subtle directions */}
           <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6 max-w-2xl mx-auto">
@@ -248,13 +287,22 @@ export default function AdhdEducation() {
             </div>
           )}
 
-          {/* @ts-ignore */}
           {slideData.source === 'PDF_REMOTE' && (
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 max-w-4xl mx-auto mb-6">
               <p className="text-sm text-blue-800 font-medium mb-2">📄 PDF Mode Active</p>
               <p className="text-sm text-blue-700">
                 Displaying pages from PDF document. Pages are rendered on-demand for optimal performance.
                 <span className="ml-2 font-semibold text-green-700">(Remote GitHub)</span>
+              </p>
+            </div>
+          )}
+          
+          {slideData.source === 'IMAGES_LOCAL' && (
+            <div className="bg-green-50 border border-green-200 rounded-lg p-4 max-w-4xl mx-auto mb-6">
+              <p className="text-sm text-green-800 font-medium mb-2">📁 Local Slides Active</p>
+              <p className="text-sm text-green-700">
+                Displaying slides from local Lovable project files.
+                <span className="ml-2 font-semibold text-blue-700">(Local Fallback)</span>
               </p>
             </div>
           )}
@@ -265,11 +313,11 @@ export default function AdhdEducation() {
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
             <span className={`w-2 h-2 rounded-full ${
               slideData.source === 'IMAGES_REMOTE' ? 'bg-green-500' :
-              slideData.source === 'PDF_REMOTE' ? 'bg-blue-500' :
+              slideData.source === 'IMAGES_LOCAL' ? 'bg-blue-500' :
+              slideData.source === 'PDF_REMOTE' ? 'bg-purple-500' :
               'bg-red-500'
             }`}></span>
             SOURCE: {slideData.source}
-            {/* @ts-ignore */}
             {slideData.slides && slideData.slides.length > 0 && ` (${slideData.slides.length})`}
           </div>
         </div>
@@ -279,7 +327,6 @@ export default function AdhdEducation() {
           {conditions.find(c => c.id === currentCondition)?.icon} {conditions.find(c => c.id === currentCondition)?.name} Education Slides
           {currentSlides.length > 0 && (
             <span className="text-muted-foreground ml-2">
-              {/* @ts-ignore */}
               ({currentSlides.length} {slideData.source === 'PDF_REMOTE' ? 'pages' : 'slides'})
               {slideData.source === 'PDF_REMOTE' && <FileText className="inline h-4 w-4 ml-1" />}
             </span>
@@ -389,7 +436,6 @@ export default function AdhdEducation() {
                   
                   // Render page on demand
                   React.useEffect(() => {
-                    // @ts-ignore
                     if (slideData.source === 'PDF_REMOTE') {
                       getPageDataUrl(pageNum).then((pageDataUrl) => {
                         if (pageDataUrl) {

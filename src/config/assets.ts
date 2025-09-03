@@ -7,16 +7,17 @@ export const GITHUB_BRANCH = "main"; // Usually "main" or "master"
 export const REMOTE_ASSET_BASE = 
   `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/public/about-conditions`;
 
-// Helper function to encode path components for URLs
-export function encodePath(path: string): string {
-  return path.split('/').map(encodeURIComponent).join('/');
+// Helper functions
+function enc(p: string): string {
+  return p.split('/').map(encodeURIComponent).join('/');
 }
 
-// Asset source types
-export type AssetSource = 'IMAGES_REMOTE' | 'PDF_REMOTE' | 'IMAGES_LOCAL' | 'PDF_LOCAL' | 'MISSING';
+export function remoteSlidesJson(title: string): string {
+  const f = enc(title);
+  return `${REMOTE_ASSET_BASE}/${f}/slides.json`;
+}
 
-export interface AssetStatus {
-  source: AssetSource;
-  count?: number;
-  error?: string;
+export function remotePdf(title: string): string {
+  const f = enc(title);
+  return `${REMOTE_ASSET_BASE}/${f}/${f}.pdf`;
 }

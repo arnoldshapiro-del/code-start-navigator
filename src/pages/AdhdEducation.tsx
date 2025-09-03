@@ -1,69 +1,102 @@
 import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Download, ChevronLeft, ChevronRight, X, Maximize } from "lucide-react";
+import { ArrowLeft, Download, ChevronLeft, ChevronRight, X, Maximize, FileText } from "lucide-react";
 import { Link } from "react-router-dom";
+import { usePdfViewer } from "@/hooks/usePdfViewer";
 
-// Load slides from slides.json or fallback to directory enumeration
-const loadSlidesForCondition = async (conditionName: string): Promise<string[]> => {
+type SlideSource = 'images' | 'pdf' | 'missing';
+
+interface SlideData {
+  source: SlideSource;
+  slides: string[];
+  thumbnailUrl?: string;
+  pdfUrl?: string;
+}
+
+// Load slides with PDF fallback
+const loadSlidesForCondition = async (conditionName: string): Promise<SlideData> => {
+  // First try to load slides.json and check for images
   try {
-    // First try to load slides.json
     const response = await fetch(`/about-conditions/${conditionName}/slides.json`);
     if (response.ok) {
       const data = await response.json();
-      return data.slides.map((slide: string) => `/about-conditions/${conditionName}/${slide}`);
+      const imageSlides = data.slides.map((slide: string) => `/about-conditions/${conditionName}/${slide}`);
+      
+      // Verify at least one image actually exists
+      if (imageSlides.length > 0) {
+        const firstImageCheck = await new Promise<boolean>((resolve) => {
+          const img = new Image();
+          img.onload = () => resolve(true);
+          img.onerror = () => resolve(false);
+          img.src = imageSlides[0];
+        });
+        
+        if (firstImageCheck) {
+          return { source: 'images', slides: imageSlides };
+        }
+      }
     }
   } catch (error) {
-    console.log(`No slides.json found for ${conditionName}, falling back to enumeration`);
+    console.log(`No slides.json found for ${conditionName}`);
   }
 
-  // Fallback: enumerate potential slide files
-  const candidates = [];
-  for (let i = 1; i <= 50; i++) {
-    candidates.push(`/about-conditions/${conditionName}/slides/Slide${i}.png`);
-    candidates.push(`/about-conditions/${conditionName}/slides/Slide${i}.PNG`);
-    candidates.push(`/about-conditions/${conditionName}/slides/Slide${i}.jpg`);
-    candidates.push(`/about-conditions/${conditionName}/slides/Slide${i}.JPG`);
-    candidates.push(`/about-conditions/${conditionName}/slides/Slide${i}.jpeg`);
-    candidates.push(`/about-conditions/${conditionName}/slides/Slide${i}.JPEG`);
-    candidates.push(`/about-conditions/${conditionName}/slides/Slide${i}.webp`);
-    candidates.push(`/about-conditions/${conditionName}/slides/Slide${i}.WebP`);
+  // Fallback: check for PDF
+  try {
+    const pdfUrl = `/about-conditions/${conditionName}/${conditionName}.pdf`;
+    const pdfResponse = await fetch(pdfUrl, { method: 'HEAD' });
+    
+    if (pdfResponse.ok) {
+      // Check for instant thumbnail
+      const thumbnailUrl = `/about-conditions/${conditionName}/slides/first.webp`;
+      const thumbnailExists = await new Promise<boolean>((resolve) => {
+        const img = new Image();
+        img.onload = () => resolve(true);
+        img.onerror = () => resolve(false);
+        img.src = thumbnailUrl;
+      });
+      
+      return { 
+        source: 'pdf', 
+        slides: [], 
+        pdfUrl, 
+        thumbnailUrl: thumbnailExists ? thumbnailUrl : undefined 
+      };
+    }
+  } catch (error) {
+    console.log(`No PDF found for ${conditionName}`);
   }
 
-  const imagePromises = candidates.map(src => 
-    new Promise<string | null>((resolve) => {
-      const img = new Image();
-      img.onload = () => resolve(src);
-      img.onerror = () => resolve(null);
-      img.src = src;
-    })
-  );
-  
-  const results = await Promise.all(imagePromises);
-  return results.filter(Boolean) as string[];
+  return { source: 'missing', slides: [] };
 };
 
 export default function AdhdEducation() {
   const [currentCondition, setCurrentCondition] = useState('ADHD');
-  const [validImages, setValidImages] = useState<string[]>([]);
+  const [slideData, setSlideData] = useState<SlideData>({ source: 'missing', slides: [] });
   const [currentSlide, setCurrentSlide] = useState<number | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [pdfPages, setPdfPages] = useState<string[]>([]);
+  
+  // PDF viewer hook
+  const { numPages, getPageDataUrl, isLoading: pdfLoading } = usePdfViewer(
+    slideData.source === 'pdf' ? slideData.pdfUrl || null : null
+  );
   
   useEffect(() => {
     const loadSlides = async () => {
       setIsLoading(true);
       try {
-        const slides = await loadSlidesForCondition(currentCondition);
-        setValidImages(slides);
+        const data = await loadSlidesForCondition(currentCondition);
+        setSlideData(data);
         
-        // Preload first slide for better performance
-        if (slides.length > 0) {
+        if (data.source === 'images' && data.slides.length > 0) {
+          // Preload first image slide
           const preloadImg = new Image();
-          preloadImg.src = slides[0];
+          preloadImg.src = data.slides[0];
         }
       } catch (error) {
         console.error('Error loading slides:', error);
-        setValidImages([]);
+        setSlideData({ source: 'missing', slides: [] });
       } finally {
         setIsLoading(false);
       }
@@ -71,6 +104,37 @@ export default function AdhdEducation() {
     
     loadSlides();
   }, [currentCondition]);
+
+  // Generate PDF page URLs when PDF is loaded
+  useEffect(() => {
+    if (slideData.source === 'pdf' && numPages > 0) {
+      const generatePages = async () => {
+        const pages: string[] = [];
+        
+        // Use thumbnail for first page if available, otherwise generate
+        if (slideData.thumbnailUrl) {
+          pages.push(slideData.thumbnailUrl);
+        } else {
+          const firstPage = await getPageDataUrl(1);
+          if (firstPage) pages.push(firstPage);
+        }
+        
+        // Generate other pages lazily (will be done on-demand)
+        for (let i = 2; i <= numPages; i++) {
+          pages.push(`pdf-page-${i}`); // Placeholder for lazy loading
+        }
+        
+        setPdfPages(pages);
+      };
+      
+      generatePages();
+    } else {
+      setPdfPages([]);
+    }
+  }, [slideData, numPages, getPageDataUrl]);
+
+  // Get current slides array based on source
+  const currentSlides = slideData.source === 'images' ? slideData.slides : pdfPages;
 
   const conditions = [
     { id: 'ADHD', name: 'ADHD', icon: '🧠' },
@@ -105,9 +169,23 @@ export default function AdhdEducation() {
     setCurrentSlide(null);
   };
 
-  const nextSlide = () => {
-    if (currentSlide !== null && currentSlide < validImages.length - 1) {
-      setCurrentSlide(currentSlide + 1);
+  const nextSlide = async () => {
+    if (currentSlide !== null && currentSlide < currentSlides.length - 1) {
+      const nextIndex = currentSlide + 1;
+      setCurrentSlide(nextIndex);
+      
+      // If PDF and page needs rendering, render it now
+      if (slideData.source === 'pdf' && pdfPages[nextIndex]?.startsWith('pdf-page-')) {
+        const pageNum = nextIndex + 1;
+        const pageDataUrl = await getPageDataUrl(pageNum);
+        if (pageDataUrl) {
+          setPdfPages(prev => {
+            const updated = [...prev];
+            updated[nextIndex] = pageDataUrl;
+            return updated;
+          });
+        }
+      }
     }
   };
 
@@ -178,7 +256,7 @@ export default function AdhdEducation() {
             ))}
           </div>
           
-          {!isLoading && validImages.length === 0 && (
+          {!isLoading && !pdfLoading && slideData.source === 'missing' && (
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 max-w-4xl mx-auto">
               <p className="text-sm text-amber-800 font-medium mb-2">📁 No slides found for {conditions.find(c => c.id === currentCondition)?.name}</p>
               <div className="text-sm text-amber-700 space-y-1">
@@ -186,8 +264,17 @@ export default function AdhdEducation() {
                 <p>1. Create folder: <code className="bg-amber-100 px-1 rounded">/public/about-conditions/{currentCondition}/slides/</code></p>
                 <p>2. Add slide images: <code className="bg-amber-100 px-1 rounded">Slide1.png, Slide2.png</code>, etc.</p>
                 <p>3. Update: <code className="bg-amber-100 px-1 rounded">/public/about-conditions/{currentCondition}/slides.json</code></p>
-                <p>4. Add PDF: <code className="bg-amber-100 px-1 rounded">{conditions.find(c => c.id === currentCondition)?.name}.pdf</code></p>
+                <p>4. <strong>OR</strong> Add PDF: <code className="bg-amber-100 px-1 rounded">{conditions.find(c => c.id === currentCondition)?.name}.pdf</code></p>
               </div>
+            </div>
+          )}
+
+          {slideData.source === 'pdf' && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 max-w-4xl mx-auto mb-6">
+              <p className="text-sm text-blue-800 font-medium mb-2">📄 PDF Mode Active</p>
+              <p className="text-sm text-blue-700">
+                Displaying pages from PDF document. Pages are rendered on-demand for optimal performance.
+              </p>
             </div>
           )}
         </div>
@@ -195,38 +282,56 @@ export default function AdhdEducation() {
         {/* Slide Grid */}
         <h2 className="text-2xl font-bold text-center mb-6">
           {conditions.find(c => c.id === currentCondition)?.icon} {conditions.find(c => c.id === currentCondition)?.name} Education Slides
-          {validImages.length > 0 && <span className="text-muted-foreground ml-2">({validImages.length} slides)</span>}
+          {currentSlides.length > 0 && (
+            <span className="text-muted-foreground ml-2">
+              ({currentSlides.length} {slideData.source === 'pdf' ? 'pages' : 'slides'})
+              {slideData.source === 'pdf' && <FileText className="inline h-4 w-4 ml-1" />}
+            </span>
+          )}
         </h2>
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-          {validImages.map((src, idx) => (
-            <div 
-              key={src} 
-              className="relative group cursor-pointer hover:shadow-lg transition-all duration-300 rounded-lg overflow-hidden border border-border"
-              onClick={() => openSlide(idx)}
-            >
-              <img 
-                src={src} 
-                alt={`${conditions.find(c => c.id === currentCondition)?.name} Education Slide ${idx + 1}`} 
-                loading={idx === 0 ? "eager" : "lazy"}
-                decoding="async"
-                className="w-full h-auto"
-              />
-              <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-all duration-300 flex items-center justify-center">
-                <Maximize className="h-8 w-8 text-white opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+          {currentSlides.map((src, idx) => {
+            const isPlaceholder = src.startsWith('pdf-page-');
+            const displaySrc = isPlaceholder ? slideData.thumbnailUrl || '/placeholder.svg' : src;
+            
+            return (
+              <div 
+                key={`${slideData.source}-${idx}`}
+                className="relative group cursor-pointer hover:shadow-lg transition-all duration-300 rounded-lg overflow-hidden border border-border"
+                onClick={() => openSlide(idx)}
+              >
+                <img 
+                  src={displaySrc}
+                  alt={`${conditions.find(c => c.id === currentCondition)?.name} Education ${slideData.source === 'pdf' ? 'Page' : 'Slide'} ${idx + 1}`} 
+                  loading={idx === 0 ? "eager" : "lazy"}
+                  decoding="async"
+                  className="w-full h-auto"
+                />
+                <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-all duration-300 flex items-center justify-center">
+                  <Maximize className="h-8 w-8 text-white opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+                </div>
+                <div className="absolute bottom-2 left-2 bg-black/70 text-white px-2 py-1 rounded text-xs">
+                  {slideData.source === 'pdf' ? 'Page' : 'Slide'} {idx + 1}
+                  {isPlaceholder && <span className="ml-1 opacity-70">(loading...)</span>}
+                </div>
+                <div className="absolute top-2 right-2 bg-blue-600/90 text-white px-2 py-1 rounded text-xs">
+                  Click to present
+                </div>
+                {slideData.source === 'pdf' && (
+                  <div className="absolute top-2 left-2 bg-green-600/90 text-white px-1 py-0.5 rounded text-xs">
+                    PDF
+                  </div>
+                )}
               </div>
-              <div className="absolute bottom-2 left-2 bg-black/70 text-white px-2 py-1 rounded text-xs">
-                Slide {idx + 1}
-              </div>
-              <div className="absolute top-2 right-2 bg-blue-600/90 text-white px-2 py-1 rounded text-xs">
-                Click to present
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
 
-        {isLoading && (
+        {(isLoading || pdfLoading) && (
           <div className="text-center py-12">
-            <p className="text-muted-foreground">Loading slides...</p>
+            <p className="text-muted-foreground">
+              Loading {slideData.source === 'pdf' ? 'PDF pages' : 'slides'}...
+            </p>
           </div>
         )}
 
@@ -249,7 +354,8 @@ export default function AdhdEducation() {
 
             {/* Slide counter */}
             <div className="absolute top-4 left-4 text-white bg-black/50 px-3 py-1 rounded z-10">
-              {currentSlide + 1} / {validImages.length}
+              {currentSlide + 1} / {currentSlides.length}
+              {slideData.source === 'pdf' && <FileText className="inline h-4 w-4 ml-1" />}
             </div>
 
             {/* Previous button */}
@@ -265,7 +371,7 @@ export default function AdhdEducation() {
             )}
 
             {/* Next button */}
-            {currentSlide < validImages.length - 1 && (
+            {currentSlide < currentSlides.length - 1 && (
               <Button
                 variant="ghost"
                 size="icon"
@@ -278,12 +384,44 @@ export default function AdhdEducation() {
 
             {/* Main slide */}
             <div className="w-full h-full flex items-center justify-center p-8">
-              <img 
-                src={validImages[currentSlide]} 
-                alt={`${conditions.find(c => c.id === currentCondition)?.name} Education Slide ${currentSlide + 1}`}
-                className="max-w-full max-h-full object-contain"
-                onClick={nextSlide}
-              />
+              {(() => {
+                const currentSrc = currentSlides[currentSlide];
+                
+                // Handle PDF page placeholder - render on demand
+                if (currentSrc?.startsWith('pdf-page-')) {
+                  const pageNum = currentSlide + 1;
+                  
+                  // Render page on demand
+                  React.useEffect(() => {
+                    if (slideData.source === 'pdf') {
+                      getPageDataUrl(pageNum).then((pageDataUrl) => {
+                        if (pageDataUrl) {
+                          setPdfPages(prev => {
+                            const updated = [...prev];
+                            updated[currentSlide] = pageDataUrl;
+                            return updated;
+                          });
+                        }
+                      });
+                    }
+                  }, [pageNum]);
+                  
+                  return (
+                    <div className="flex items-center justify-center">
+                      <p className="text-white">Rendering page {pageNum}...</p>
+                    </div>
+                  );
+                }
+                
+                return (
+                  <img 
+                    src={currentSrc} 
+                    alt={`${conditions.find(c => c.id === currentCondition)?.name} Education ${slideData.source === 'pdf' ? 'Page' : 'Slide'} ${currentSlide + 1}`}
+                    className="max-w-full max-h-full object-contain"
+                    onClick={nextSlide}
+                  />
+                );
+              })()}
             </div>
 
             {/* Instructions */}

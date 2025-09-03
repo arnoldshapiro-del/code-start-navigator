@@ -3,25 +3,78 @@ import { Button } from "@/components/ui/button";
 import { ArrowLeft, Download, ChevronLeft, ChevronRight, X, Maximize, FileText } from "lucide-react";
 import { Link } from "react-router-dom";
 import { usePdfViewer } from "@/hooks/usePdfViewer";
+import { REMOTE_ASSET_BASE, encodePath, type AssetSource, type AssetStatus } from "@/config/assets";
 
-type SlideSource = 'images' | 'pdf' | 'missing';
+type SlideSource = 'images_remote' | 'pdf_remote' | 'images_local' | 'pdf_local' | 'missing';
 
 interface SlideData {
   source: SlideSource;
   slides: string[];
   pdfUrl?: string;
+  status?: AssetStatus;
 }
 
-// Load slides with PDF fallback
+// Load slides with GitHub remote → local fallback
 const loadSlidesForCondition = async (conditionName: string): Promise<SlideData> => {
-  // First try to load slides.json and check for images
+  const folder = encodePath(conditionName);
+  
+  // A) Try remote slides.json first
+  try {
+    const remoteSlidesJson = `${REMOTE_ASSET_BASE}/${folder}/slides.json`;
+    const response = await fetch(remoteSlidesJson);
+    
+    if (response.ok) {
+      const data = await response.json();
+      if (data.slides && data.slides.length > 0) {
+        const remoteImageSlides = data.slides.map((slide: string) => 
+          `${REMOTE_ASSET_BASE}/${folder}/${encodePath(slide)}`
+        );
+        
+        // Verify first remote image exists
+        const firstImageCheck = await new Promise<boolean>((resolve) => {
+          const img = new Image();
+          img.onload = () => resolve(true);
+          img.onerror = () => resolve(false);
+          img.src = remoteImageSlides[0];
+        });
+        
+        if (firstImageCheck) {
+          return { 
+            source: 'images_remote', 
+            slides: remoteImageSlides,
+            status: { source: 'IMAGES_REMOTE', count: remoteImageSlides.length }
+          };
+        }
+      }
+    }
+  } catch (error) {
+    console.log(`No remote slides.json found for ${conditionName}`);
+  }
+
+  // B) Try remote PDF  
+  try {
+    const remotePdf = `${REMOTE_ASSET_BASE}/${folder}/${encodePath(conditionName)}.pdf`;
+    const pdfResponse = await fetch(remotePdf, { method: 'HEAD' });
+    
+    if (pdfResponse.ok) {
+      return { 
+        source: 'pdf_remote', 
+        slides: [], 
+        pdfUrl: remotePdf,
+        status: { source: 'PDF_REMOTE' }
+      };
+    }
+  } catch (error) {
+    console.log(`No remote PDF found for ${conditionName}`);
+  }
+
+  // C) Fallback to local slides.json
   try {
     const response = await fetch(`/about-conditions/${conditionName}/slides.json`);
     if (response.ok) {
       const data = await response.json();
       const imageSlides = data.slides.map((slide: string) => `/about-conditions/${conditionName}/${slide}`);
       
-      // Verify at least one image actually exists
       if (imageSlides.length > 0) {
         const firstImageCheck = await new Promise<boolean>((resolve) => {
           const img = new Image();
@@ -31,31 +84,40 @@ const loadSlidesForCondition = async (conditionName: string): Promise<SlideData>
         });
         
         if (firstImageCheck) {
-          return { source: 'images', slides: imageSlides };
+          return { 
+            source: 'images_local', 
+            slides: imageSlides,
+            status: { source: 'IMAGES_LOCAL', count: imageSlides.length }
+          };
         }
       }
     }
   } catch (error) {
-    console.log(`No slides.json found for ${conditionName}`);
+    console.log(`No local slides.json found for ${conditionName}`);
   }
 
-  // Fallback: check for PDF
+  // D) Fallback to local PDF
   try {
     const pdfUrl = `/about-conditions/${conditionName}/${conditionName}.pdf`;
     const pdfResponse = await fetch(pdfUrl, { method: 'HEAD' });
     
     if (pdfResponse.ok) {
       return { 
-        source: 'pdf', 
+        source: 'pdf_local', 
         slides: [], 
-        pdfUrl
+        pdfUrl,
+        status: { source: 'PDF_LOCAL' }
       };
     }
   } catch (error) {
-    console.log(`No PDF found for ${conditionName}`);
+    console.log(`No local PDF found for ${conditionName}`);
   }
 
-  return { source: 'missing', slides: [] };
+  return { 
+    source: 'missing', 
+    slides: [],
+    status: { source: 'MISSING' }
+  };
 };
 
 export default function AdhdEducation() {
@@ -68,7 +130,7 @@ export default function AdhdEducation() {
   
   // PDF viewer hook
   const { numPages, getPageDataUrl, isLoading: pdfLoading } = usePdfViewer(
-    slideData.source === 'pdf' ? slideData.pdfUrl || null : null
+    (slideData.source === 'pdf_remote' || slideData.source === 'pdf_local') ? slideData.pdfUrl || null : null
   );
   
   useEffect(() => {
@@ -78,7 +140,7 @@ export default function AdhdEducation() {
         const data = await loadSlidesForCondition(currentCondition);
         setSlideData(data);
         
-        if (data.source === 'images' && data.slides.length > 0) {
+        if ((data.source === 'images_remote' || data.source === 'images_local') && data.slides.length > 0) {
           // Preload first image slide
           const preloadImg = new Image();
           preloadImg.src = data.slides[0];
@@ -96,7 +158,7 @@ export default function AdhdEducation() {
 
   // Generate PDF page URLs when PDF is loaded
   useEffect(() => {
-    if (slideData.source === 'pdf' && numPages > 0) {
+    if ((slideData.source === 'pdf_remote' || slideData.source === 'pdf_local') && numPages > 0) {
       const generatePages = async () => {
         const pages: string[] = [];
         
@@ -115,7 +177,7 @@ export default function AdhdEducation() {
   }, [slideData, numPages]);
 
   // Get current slides array based on source
-  const currentSlides = slideData.source === 'images' ? slideData.slides : pdfPages;
+  const currentSlides = (slideData.source === 'images_remote' || slideData.source === 'images_local') ? slideData.slides : pdfPages;
 
   const conditions = [
     { id: 'ADHD', name: 'ADHD', icon: '🧠' },
@@ -156,7 +218,7 @@ export default function AdhdEducation() {
       setCurrentSlide(nextIndex);
       
       // If PDF and page needs rendering, render it now
-      if (slideData.source === 'pdf' && pdfPages[nextIndex]?.startsWith('pdf-page-')) {
+      if ((slideData.source === 'pdf_remote' || slideData.source === 'pdf_local') && pdfPages[nextIndex]?.startsWith('pdf-page-')) {
         const pageNum = nextIndex + 1;
         const pageDataUrl = await getPageDataUrl(pageNum);
         if (pageDataUrl) {
@@ -250,23 +312,41 @@ export default function AdhdEducation() {
             </div>
           )}
 
-          {slideData.source === 'pdf' && (
+          {(slideData.source === 'pdf_remote' || slideData.source === 'pdf_local') && (
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 max-w-4xl mx-auto mb-6">
               <p className="text-sm text-blue-800 font-medium mb-2">📄 PDF Mode Active</p>
               <p className="text-sm text-blue-700">
                 Displaying pages from PDF document. Pages are rendered on-demand for optimal performance.
+                {slideData.source === 'pdf_remote' && <span className="ml-2 font-semibold text-green-700">(Remote GitHub)</span>}
               </p>
             </div>
           )}
         </div>
+
+        {/* Status Readout */}
+        {slideData.status && (
+          <div className="text-center mb-4">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-700">
+              <span className={`w-2 h-2 rounded-full ${
+                slideData.status.source === 'IMAGES_REMOTE' ? 'bg-green-500' :
+                slideData.status.source === 'PDF_REMOTE' ? 'bg-blue-500' :
+                slideData.status.source === 'IMAGES_LOCAL' ? 'bg-yellow-500' :
+                slideData.status.source === 'PDF_LOCAL' ? 'bg-orange-500' :
+                'bg-red-500'
+              }`}></span>
+              SOURCE: {slideData.status.source}
+              {slideData.status.count && ` (${slideData.status.count})`}
+            </div>
+          </div>
+        )}
 
         {/* Slide Grid */}
         <h2 className="text-2xl font-bold text-center mb-6">
           {conditions.find(c => c.id === currentCondition)?.icon} {conditions.find(c => c.id === currentCondition)?.name} Education Slides
           {currentSlides.length > 0 && (
             <span className="text-muted-foreground ml-2">
-              ({currentSlides.length} {slideData.source === 'pdf' ? 'pages' : 'slides'})
-              {slideData.source === 'pdf' && <FileText className="inline h-4 w-4 ml-1" />}
+              ({currentSlides.length} {(slideData.source === 'pdf_remote' || slideData.source === 'pdf_local') ? 'pages' : 'slides'})
+              {(slideData.source === 'pdf_remote' || slideData.source === 'pdf_local') && <FileText className="inline h-4 w-4 ml-1" />}
             </span>
           )}
         </h2>
@@ -283,7 +363,7 @@ export default function AdhdEducation() {
               >
                 <img 
                   src={displaySrc}
-                  alt={`${conditions.find(c => c.id === currentCondition)?.name} Education ${slideData.source === 'pdf' ? 'Page' : 'Slide'} ${idx + 1}`} 
+                  alt={`${conditions.find(c => c.id === currentCondition)?.name} Education ${(slideData.source === 'pdf_remote' || slideData.source === 'pdf_local') ? 'Page' : 'Slide'} ${idx + 1}`} 
                   loading={idx === 0 ? "eager" : "lazy"}
                   decoding="async"
                   className="w-full h-auto"
@@ -292,15 +372,15 @@ export default function AdhdEducation() {
                   <Maximize className="h-8 w-8 text-white opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
                 </div>
                 <div className="absolute bottom-2 left-2 bg-black/70 text-white px-2 py-1 rounded text-xs">
-                  {slideData.source === 'pdf' ? 'Page' : 'Slide'} {idx + 1}
+                  {(slideData.source === 'pdf_remote' || slideData.source === 'pdf_local') ? 'Page' : 'Slide'} {idx + 1}
                   {isPlaceholder && <span className="ml-1 opacity-70">(loading...)</span>}
                 </div>
                 <div className="absolute top-2 right-2 bg-blue-600/90 text-white px-2 py-1 rounded text-xs">
                   Click to present
                 </div>
-                {slideData.source === 'pdf' && (
+                {(slideData.source === 'pdf_remote' || slideData.source === 'pdf_local') && (
                   <div className="absolute top-2 left-2 bg-green-600/90 text-white px-1 py-0.5 rounded text-xs">
-                    PDF
+                    {slideData.source === 'pdf_remote' ? 'REMOTE PDF' : 'PDF'}
                   </div>
                 )}
               </div>
@@ -311,7 +391,7 @@ export default function AdhdEducation() {
         {(isLoading || pdfLoading) && (
           <div className="text-center py-12">
             <p className="text-muted-foreground">
-              Loading {slideData.source === 'pdf' ? 'PDF pages' : 'slides'}...
+              Loading {(slideData.source === 'pdf_remote' || slideData.source === 'pdf_local') ? 'PDF pages' : 'slides'}...
             </p>
           </div>
         )}
@@ -336,7 +416,7 @@ export default function AdhdEducation() {
             {/* Slide counter */}
             <div className="absolute top-4 left-4 text-white bg-black/50 px-3 py-1 rounded z-10">
               {currentSlide + 1} / {currentSlides.length}
-              {slideData.source === 'pdf' && <FileText className="inline h-4 w-4 ml-1" />}
+              {(slideData.source === 'pdf_remote' || slideData.source === 'pdf_local') && <FileText className="inline h-4 w-4 ml-1" />}
             </div>
 
             {/* Previous button */}
@@ -374,7 +454,7 @@ export default function AdhdEducation() {
                   
                   // Render page on demand
                   React.useEffect(() => {
-                    if (slideData.source === 'pdf') {
+                    if (slideData.source === 'pdf_remote' || slideData.source === 'pdf_local') {
                       getPageDataUrl(pageNum).then((pageDataUrl) => {
                         if (pageDataUrl) {
                           setPdfPages(prev => {
@@ -397,7 +477,7 @@ export default function AdhdEducation() {
                 return (
                   <img 
                     src={currentSrc} 
-                    alt={`${conditions.find(c => c.id === currentCondition)?.name} Education ${slideData.source === 'pdf' ? 'Page' : 'Slide'} ${currentSlide + 1}`}
+                    alt={`${conditions.find(c => c.id === currentCondition)?.name} Education ${(slideData.source === 'pdf_remote' || slideData.source === 'pdf_local') ? 'Page' : 'Slide'} ${currentSlide + 1}`}
                     className="max-w-full max-h-full object-contain"
                     onClick={nextSlide}
                   />

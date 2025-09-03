@@ -1,0 +1,1 @@
+Upload slide images to /public/about-conditions/Eating Disorders/slides/ (PNG/JPG/WebP). Update slides.json accordingly.

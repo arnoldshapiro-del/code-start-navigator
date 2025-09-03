@@ -1,0 +1,1 @@
+Upload slide images to /public/about-conditions/Sleep Disorders/slides/ (PNG/JPG/WebP). Update slides.json accordingly.

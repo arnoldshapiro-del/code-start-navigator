@@ -1,0 +1,1 @@
+Upload slide images to /public/about-conditions/ADHD/slides/ (PNG/JPG/WebP). Update slides.json accordingly.

@@ -3,59 +3,96 @@ import { Button } from "@/components/ui/button";
 import { ArrowLeft, Download, ChevronLeft, ChevronRight, X, Maximize } from "lucide-react";
 import { Link } from "react-router-dom";
 
-// Generate candidate images for any condition
-const generateCandidateImages = (condition: string) => {
+// Load slides from slides.json or fallback to directory enumeration
+const loadSlidesForCondition = async (conditionName: string): Promise<string[]> => {
+  try {
+    // First try to load slides.json
+    const response = await fetch(`/about-conditions/${conditionName}/slides.json`);
+    if (response.ok) {
+      const data = await response.json();
+      return data.slides.map((slide: string) => `/about-conditions/${conditionName}/${slide}`);
+    }
+  } catch (error) {
+    console.log(`No slides.json found for ${conditionName}, falling back to enumeration`);
+  }
+
+  // Fallback: enumerate potential slide files
   const candidates = [];
   for (let i = 1; i <= 50; i++) {
-    candidates.push(`/about-conditions/${condition}/Slide${i}.PNG`);
+    candidates.push(`/about-conditions/${conditionName}/slides/Slide${i}.png`);
+    candidates.push(`/about-conditions/${conditionName}/slides/Slide${i}.PNG`);
+    candidates.push(`/about-conditions/${conditionName}/slides/Slide${i}.jpg`);
+    candidates.push(`/about-conditions/${conditionName}/slides/Slide${i}.JPG`);
+    candidates.push(`/about-conditions/${conditionName}/slides/Slide${i}.jpeg`);
+    candidates.push(`/about-conditions/${conditionName}/slides/Slide${i}.JPEG`);
+    candidates.push(`/about-conditions/${conditionName}/slides/Slide${i}.webp`);
+    candidates.push(`/about-conditions/${conditionName}/slides/Slide${i}.WebP`);
   }
-  return candidates;
+
+  const imagePromises = candidates.map(src => 
+    new Promise<string | null>((resolve) => {
+      const img = new Image();
+      img.onload = () => resolve(src);
+      img.onerror = () => resolve(null);
+      img.src = src;
+    })
+  );
+  
+  const results = await Promise.all(imagePromises);
+  return results.filter(Boolean) as string[];
 };
 
 export default function AdhdEducation() {
-  const [currentCondition, setCurrentCondition] = useState('adhd');
+  const [currentCondition, setCurrentCondition] = useState('ADHD');
   const [validImages, setValidImages] = useState<string[]>([]);
   const [currentSlide, setCurrentSlide] = useState<number | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   
   useEffect(() => {
-    const candidates = generateCandidateImages(currentCondition);
-    const imagePromises = candidates.map(src => 
-      new Promise<string | null>((resolve) => {
-        const img = new Image();
-        img.onload = () => resolve(src);
-        img.onerror = () => resolve(null);
-        img.src = src;
-      })
-    );
+    const loadSlides = async () => {
+      setIsLoading(true);
+      try {
+        const slides = await loadSlidesForCondition(currentCondition);
+        setValidImages(slides);
+        
+        // Preload first slide for better performance
+        if (slides.length > 0) {
+          const preloadImg = new Image();
+          preloadImg.src = slides[0];
+        }
+      } catch (error) {
+        console.error('Error loading slides:', error);
+        setValidImages([]);
+      } finally {
+        setIsLoading(false);
+      }
+    };
     
-    Promise.all(imagePromises).then(results => {
-      const valid = results.filter(Boolean) as string[];
-      setValidImages(valid);
-    });
+    loadSlides();
   }, [currentCondition]);
 
   const conditions = [
-    { id: 'adhd', name: 'ADHD', icon: '🧠' },
-    { id: 'Generalized-Anxiety-Disorder', name: 'Generalized Anxiety Disorder', icon: '😟' },
+    { id: 'ADHD', name: 'ADHD', icon: '🧠' },
+    { id: 'Generalized Anxiety Disorder', name: 'Generalized Anxiety Disorder', icon: '😟' },
     { id: 'Autism Spectrum Disorder', name: 'Autism Spectrum Disorder', icon: '🧩' },
     { id: 'PTSD', name: 'PTSD', icon: '🛡️' },
-    { id: 'ocd', name: 'OCD', icon: '🔄' },
-    { id: 'panic-disorder', name: 'Panic Disorder', icon: '💨' },
+    { id: 'OCD', name: 'OCD', icon: '🔄' },
+    { id: 'Panic Disorder', name: 'Panic Disorder', icon: '💨' },
     { id: 'Sleep Disorders', name: 'Sleep Disorders', icon: '😴' },
     { id: 'Eating Disorders', name: 'Eating Disorders', icon: '🍽️' },
-    { id: 'alcohol-use-disorder', name: 'Alcohol Use Disorder', icon: '🍺' },
-    { id: 'cannabis-use-disorder', name: 'Cannabis Use Disorder', icon: '🌿' },
-    { id: 'substance-use-disorder', name: 'Substance Use Disorder', icon: '🚫' },
-    { id: 'Opioid-Use-Disorder', name: 'Opioid Use Disorder', icon: '💊' },
-    { id: 'major-depressive-disorder', name: 'Major Depressive Disorder', icon: '🌧️' },
-    { id: 'childhood-bipolar-disorder', name: 'Childhood Bipolar Disorder', icon: '🎭' },
-    { id: 'Personality-Disorders', name: 'Personality Disorders', icon: '🎭' },
-    { id: 'Antisocial-Personality-Disorder', name: 'Antisocial Personality Disorder', icon: '⚡' },
-    { id: 'Borderline-Personality-Disorder', name: 'Borderline Personality Disorder', icon: '💔' },
-    { id: 'Narcissistic-Personality-Disorder', name: 'Narcissistic Personality Disorder', icon: '👑' },
-    { id: 'Social-Anxiety-Disorder', name: 'Social Anxiety Disorder', icon: '👥' },
-    { id: 'Pediatric-Generalized-Anxiety-Disorder-GAD', name: 'Childhood GAD', icon: '😰' }
+    { id: 'Alcohol Use Disorder', name: 'Alcohol Use Disorder', icon: '🍺' },
+    { id: 'Cannabis Use Disorder', name: 'Cannabis Use Disorder', icon: '🌿' },
+    { id: 'Substance Use Disorder', name: 'Substance Use Disorder', icon: '🚫' },
+    { id: 'Opioid Use Disorder', name: 'Opioid Use Disorder', icon: '💊' },
+    { id: 'Major Depressive Disorder', name: 'Major Depressive Disorder', icon: '🌧️' },
+    { id: 'Childhood Bipolar Disorder', name: 'Childhood Bipolar Disorder', icon: '🎭' },
+    { id: 'Personality Disorders', name: 'Personality Disorders', icon: '🎭' },
+    { id: 'Antisocial Personality Disorder', name: 'Antisocial Personality Disorder', icon: '⚡' },
+    { id: 'Borderline Personality Disorder', name: 'Borderline Personality Disorder', icon: '💔' },
+    { id: 'Narcissistic Personality Disorder', name: 'Narcissistic Personality Disorder', icon: '👑' },
+    { id: 'Social Anxiety Disorder', name: 'Social Anxiety Disorder', icon: '👥' },
+    { id: 'Childhood GAD', name: 'Childhood GAD', icon: '😰' }
   ];
 
   const openSlide = (index: number) => {
@@ -141,14 +178,15 @@ export default function AdhdEducation() {
             ))}
           </div>
           
-          {validImages.length === 0 && (
+          {!isLoading && validImages.length === 0 && (
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 max-w-4xl mx-auto">
               <p className="text-sm text-amber-800 font-medium mb-2">📁 No slides found for {conditions.find(c => c.id === currentCondition)?.name}</p>
               <div className="text-sm text-amber-700 space-y-1">
                 <p><strong>To add slides:</strong></p>
-                <p>1. Create folder: <code className="bg-amber-100 px-1 rounded">/public/about-conditions/{currentCondition}/</code></p>
-                <p>2. Add slide images: <code className="bg-amber-100 px-1 rounded">Slide1.PNG, Slide2.PNG</code>, etc.</p>
-                <p>3. Add PDF: <code className="bg-amber-100 px-1 rounded">{conditions.find(c => c.id === currentCondition)?.name}.pdf</code></p>
+                <p>1. Create folder: <code className="bg-amber-100 px-1 rounded">/public/about-conditions/{currentCondition}/slides/</code></p>
+                <p>2. Add slide images: <code className="bg-amber-100 px-1 rounded">Slide1.png, Slide2.png</code>, etc.</p>
+                <p>3. Update: <code className="bg-amber-100 px-1 rounded">/public/about-conditions/{currentCondition}/slides.json</code></p>
+                <p>4. Add PDF: <code className="bg-amber-100 px-1 rounded">{conditions.find(c => c.id === currentCondition)?.name}.pdf</code></p>
               </div>
             </div>
           )}
@@ -169,7 +207,8 @@ export default function AdhdEducation() {
               <img 
                 src={src} 
                 alt={`${conditions.find(c => c.id === currentCondition)?.name} Education Slide ${idx + 1}`} 
-                loading="lazy" 
+                loading={idx === 0 ? "eager" : "lazy"}
+                decoding="async"
                 className="w-full h-auto"
               />
               <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-all duration-300 flex items-center justify-center">
@@ -185,7 +224,7 @@ export default function AdhdEducation() {
           ))}
         </div>
 
-        {validImages.length === 0 && (
+        {isLoading && (
           <div className="text-center py-12">
             <p className="text-muted-foreground">Loading slides...</p>
           </div>

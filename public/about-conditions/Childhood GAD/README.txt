@@ -1,0 +1,1 @@
+Upload slide images to /public/about-conditions/Childhood GAD/slides/ (PNG/JPG/WebP). Update slides.json accordingly.

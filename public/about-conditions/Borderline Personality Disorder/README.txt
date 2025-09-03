@@ -1,0 +1,1 @@
+Upload slide images to /public/about-conditions/Borderline Personality Disorder/slides/ (PNG/JPG/WebP). Update slides.json accordingly.

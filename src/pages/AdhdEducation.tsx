@@ -9,7 +9,6 @@ type SlideSource = 'images' | 'pdf' | 'missing';
 interface SlideData {
   source: SlideSource;
   slides: string[];
-  thumbnailUrl?: string;
   pdfUrl?: string;
 }
 
@@ -46,20 +45,10 @@ const loadSlidesForCondition = async (conditionName: string): Promise<SlideData>
     const pdfResponse = await fetch(pdfUrl, { method: 'HEAD' });
     
     if (pdfResponse.ok) {
-      // Check for instant thumbnail
-      const thumbnailUrl = `/about-conditions/${conditionName}/slides/first.webp`;
-      const thumbnailExists = await new Promise<boolean>((resolve) => {
-        const img = new Image();
-        img.onload = () => resolve(true);
-        img.onerror = () => resolve(false);
-        img.src = thumbnailUrl;
-      });
-      
       return { 
         source: 'pdf', 
         slides: [], 
-        pdfUrl, 
-        thumbnailUrl: thumbnailExists ? thumbnailUrl : undefined 
+        pdfUrl
       };
     }
   } catch (error) {
@@ -111,16 +100,8 @@ export default function AdhdEducation() {
       const generatePages = async () => {
         const pages: string[] = [];
         
-        // Use thumbnail for first page if available, otherwise generate
-        if (slideData.thumbnailUrl) {
-          pages.push(slideData.thumbnailUrl);
-        } else {
-          const firstPage = await getPageDataUrl(1);
-          if (firstPage) pages.push(firstPage);
-        }
-        
-        // Generate other pages lazily (will be done on-demand)
-        for (let i = 2; i <= numPages; i++) {
+        // Generate placeholder URLs for all pages (will render on-demand)
+        for (let i = 1; i <= numPages; i++) {
           pages.push(`pdf-page-${i}`); // Placeholder for lazy loading
         }
         
@@ -131,7 +112,7 @@ export default function AdhdEducation() {
     } else {
       setPdfPages([]);
     }
-  }, [slideData, numPages, getPageDataUrl]);
+  }, [slideData, numPages]);
 
   // Get current slides array based on source
   const currentSlides = slideData.source === 'images' ? slideData.slides : pdfPages;
@@ -292,7 +273,7 @@ export default function AdhdEducation() {
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
           {currentSlides.map((src, idx) => {
             const isPlaceholder = src.startsWith('pdf-page-');
-            const displaySrc = isPlaceholder ? slideData.thumbnailUrl || '/placeholder.svg' : src;
+            const displaySrc = isPlaceholder ? '/placeholder.svg' : src;
             
             return (
               <div 

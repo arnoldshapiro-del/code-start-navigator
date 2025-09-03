@@ -1,24 +1,42 @@
 import { useState, useEffect, useCallback } from 'react';
-import * as pdfjsLib from 'pdfjs-dist';
-
-// Configure PDF.js worker
-pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
 
 interface PdfPage {
   canvas: HTMLCanvasElement;
   pageNumber: number;
 }
 
+type PDFDocumentProxy = any;
+
 export const usePdfViewer = (pdfUrl: string | null) => {
-  const [pdfDoc, setPdfDoc] = useState<pdfjsLib.PDFDocumentProxy | null>(null);
+  const [pdfDoc, setPdfDoc] = useState<PDFDocumentProxy | null>(null);
   const [numPages, setNumPages] = useState(0);
   const [renderedPages, setRenderedPages] = useState<Map<number, PdfPage>>(new Map());
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pdfjsLib, setPdfjsLib] = useState<any>(null);
+
+  // Load PDF.js library dynamically
+  useEffect(() => {
+    const loadPdfJs = async () => {
+      if (typeof window !== 'undefined' && !pdfjsLib) {
+        try {
+          const lib = await import('pdfjs-dist');
+          // Configure PDF.js worker only in browser
+          lib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${lib.version}/pdf.worker.min.js`;
+          setPdfjsLib(lib);
+        } catch (err) {
+          console.error('Error loading PDF.js:', err);
+          setError('Failed to load PDF library');
+        }
+      }
+    };
+
+    loadPdfJs();
+  }, [pdfjsLib]);
 
   // Load PDF document
   useEffect(() => {
-    if (!pdfUrl) {
+    if (!pdfUrl || !pdfjsLib) {
       setPdfDoc(null);
       setNumPages(0);
       setRenderedPages(new Map());
@@ -30,21 +48,21 @@ export const usePdfViewer = (pdfUrl: string | null) => {
 
     pdfjsLib.getDocument(pdfUrl)
       .promise
-      .then((doc) => {
+      .then((doc: PDFDocumentProxy) => {
         setPdfDoc(doc);
         setNumPages(doc.numPages);
         setIsLoading(false);
       })
-      .catch((err) => {
+      .catch((err: Error) => {
         console.error('Error loading PDF:', err);
         setError('Failed to load PDF');
         setIsLoading(false);
       });
-  }, [pdfUrl]);
+  }, [pdfUrl, pdfjsLib]);
 
   // Render a specific page
   const renderPage = useCallback(async (pageNumber: number): Promise<HTMLCanvasElement | null> => {
-    if (!pdfDoc || pageNumber < 1 || pageNumber > numPages) return null;
+    if (!pdfDoc || !pdfjsLib || pageNumber < 1 || pageNumber > numPages) return null;
 
     // Return cached page if already rendered
     const cached = renderedPages.get(pageNumber);
@@ -77,7 +95,7 @@ export const usePdfViewer = (pdfUrl: string | null) => {
       console.error(`Error rendering page ${pageNumber}:`, err);
       return null;
     }
-  }, [pdfDoc, numPages, renderedPages]);
+  }, [pdfDoc, pdfjsLib, numPages, renderedPages]);
 
   // Get page as data URL for immediate display
   const getPageDataUrl = useCallback(async (pageNumber: number): Promise<string | null> => {

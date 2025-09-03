@@ -1,7 +1,7 @@
 // GitHub Integration Configuration
 // TODO: Replace these with your actual GitHub repo details
-export const GITHUB_OWNER = "your-username"; // Replace with your GitHub username/org
-export const GITHUB_REPO = "your-repo-name"; // Replace with your repo name  
+export const GITHUB_OWNER = "arnol"; // Replace with your GitHub username/org
+export const GITHUB_REPO = "arnie-newest-updated-website-main"; // Replace with your repo name  
 export const GITHUB_BRANCH = "main"; // Usually "main" or "master"
 
 export const REMOTE_ASSET_BASE = 

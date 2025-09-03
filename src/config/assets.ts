@@ -5,7 +5,7 @@ export const GITHUB_REPO = "arnie-newest-updated-website-main"; // Replace with 
 export const GITHUB_BRANCH = "main"; // Usually "main" or "master"
 
 export const REMOTE_ASSET_BASE = 
-  `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/public/about-conditions`;
+  `https://raw.githubusercontent.com/${GITHUB_OWNER}/${GITHUB_REPO}/${GITHUB_BRANCH}/about-conditions`;
 
 // Helper functions
 function enc(p: string): string {
